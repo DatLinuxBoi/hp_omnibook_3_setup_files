@@ -22,7 +22,7 @@ Undo either fix with `sudo ./fix-wifi.sh --undo` or `sudo ./fix-audio.sh --undo`
 > **Status:** both scripts pass a syntax check, but they haven't been run on a
 > real laptop yet. Run the preview first and read what it says.
 
-> **Speaker safety:** the sound settings are borrowed from another laptop.
+## **⚠️Speaker safety⚠️:** the sound settings are borrowed from another laptop.
 > Keep speaker volume at about half until you know it sounds clean.
 
 ## What's wrong, in one paragraph each
