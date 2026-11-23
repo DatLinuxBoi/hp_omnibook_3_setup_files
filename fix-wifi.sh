@@ -126,24 +126,56 @@ fi
 # changing the firmware, the initramfs has to be rebuilt.
 
 KVER=$(uname -r)                                   # the kernel you're running now
-IMG=${INITRAMFS:-/boot/initramfs-$KVER.img}        # its initramfs (dracut's usual name)
 WIFI_FW_PATH="ath11k/WCN6855/hw2.1/board-2.bin"
 
+# Work out which kind of initramfs this system uses. There are two common styles:
+#   Ubuntu / Debian: /boot/initrd.img-<version>, built by update-initramfs,
+#                    looked inside with lsinitramfs
+#   Fedora / dracut: /boot/initramfs-<version>.img, built by dracut,
+#                    looked inside with lsinitrd
+if [ -f "/boot/initrd.img-$KVER" ] && have update-initramfs; then
+  STYLE=ubuntu; IMG="/boot/initrd.img-$KVER"; LISTER=lsinitramfs
+elif [ -f "/boot/initramfs-$KVER.img" ] && have dracut; then
+  STYLE=dracut; IMG="/boot/initramfs-$KVER.img"; LISTER=lsinitrd
+else
+  STYLE=unknown; IMG="(not found)"; LISTER=""
+fi
+
 # Answers "does the initramfs carry Wi-Fi firmware?" with yes / no / unknown.
-# lsinitrd (part of dracut) lists the files inside an initramfs. Read only.
+# The LISTER program prints the list of files inside the initramfs. Read only.
 initramfs_has_wifi_fw() {
-  if ! have lsinitrd || [ ! -f "$IMG" ]; then echo unknown; return; fi
-  if lsinitrd "$IMG" 2>/dev/null | grep -q "$WIFI_FW_PATH"; then echo yes; else echo no; fi
+  if [ "$STYLE" = unknown ] || ! have "$LISTER"; then echo unknown; return; fi
+  if "$LISTER" "$IMG" 2>/dev/null | grep -q "$WIFI_FW_PATH"; then echo yes; else echo no; fi
 }
 
-# Rebuild the initramfs the same way the old omnibook3-setup.sh did, with
-# extra safety: build to a NEW file, check it, keep a backup of the old one,
-# and only then swap them.
+# Rebuild the initramfs so it packs the current firmware files.
 #   $1 = "present" after --apply (fixed file should be inside)
 #        "absent"  after --undo  (fixed file should be gone)
 rebuild_initramfs() {
-  have dracut || die "dracut not found. Rebuild your initramfs with your distro's tool instead."
-  say "Rebuilding the initramfs: $IMG"
+  if [ "$STYLE" = ubuntu ]; then rebuild_ubuntu "$1"; return; fi
+  rebuild_dracut "$1"
+}
+
+# Ubuntu: keep a backup copy, then run Ubuntu's own update-initramfs, the
+# normal command Ubuntu itself runs after updates. If it fails, put the
+# backup back.
+rebuild_ubuntu() {
+  say "Rebuilding the initramfs (Ubuntu style): $IMG"
+  cp -p "$IMG" "$IMG.before-fix-wifi"
+  info "backup saved as $IMG.before-fix-wifi"
+  if ! update-initramfs -u -k "$KVER"; then
+    cp -p "$IMG.before-fix-wifi" "$IMG"
+    die "update-initramfs failed, so the backup was put back. Nothing changed."
+  fi
+  if lsinitramfs "$IMG" | grep -q "updates/$WIFI_FW_PATH"; then inside=present; else inside=absent; fi
+  [ "$inside" = "$1" ] || info "WARNING: expected the fixed Wi-Fi file to be $1 in the new initramfs, but it is $inside."
+  info "done"
+}
+
+# dracut: same way the old omnibook3-setup.sh did it, with extra safety:
+# build to a NEW file, check it, keep a backup of the old one, then swap them.
+rebuild_dracut() {
+  say "Rebuilding the initramfs (dracut style): $IMG"
   # --no-hostonly = include ALL drivers. Without it, your old notes say the
   # boot hung because the disk driver was left out. Don't remove it.
   dracut -f --no-hostonly --kver "$KVER" "$IMG.new"
@@ -173,12 +205,16 @@ handle_initramfs() {
         say "IMPORTANT: your initramfs carries its own copy of the Wi-Fi firmware."
         info "Until it's rebuilt, the change won't take effect. Either run this script"
         info "again with --rebuild-initramfs, or run this yourself:"
-        info "  sudo dracut -f --no-hostonly --kver $KVER $IMG"
+        if [ "$STYLE" = ubuntu ]; then
+          info "  sudo update-initramfs -u -k $KVER"
+        else
+          info "  sudo dracut -f --no-hostonly --kver $KVER $IMG"
+        fi
       fi ;;
     no)
-      info "your initramfs has no Wi-Fi firmware, so it doesn't need rebuilding" ;;
+      info "your initramfs ($IMG) has no Wi-Fi firmware, so it doesn't need rebuilding" ;;
     unknown)
-      info "couldn't check your initramfs ($IMG or lsinitrd missing)."
+      info "couldn't find or check your initramfs for kernel $KVER."
       info "If Wi-Fi still fails after a reboot, rebuild it with your distro's tool:"
       info "  dracut: sudo dracut -f --no-hostonly    Arch: sudo mkinitcpio -P"
       info "  Debian/Ubuntu: sudo update-initramfs -u" ;;

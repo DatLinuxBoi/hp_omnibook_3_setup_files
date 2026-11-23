@@ -72,10 +72,10 @@ Qualcomm's free `ath11k-bdencoder` tool from GitHub).
 - Wi-Fi: `sudo dmesg | grep -i ath11k`. If the label it asks for differs from
   the one in `fix-wifi.sh`, change `NEW_NAME` at the top of the script.
 - Wi-Fi: **the most common cause is the initramfs** (the starter system in
-  `/boot`). If it was built with `dracut --no-hostonly`, it carries its own
-  copy of the Wi-Fi firmware, and the driver reads that old copy. `fix-wifi.sh`
-  checks this and tells you. Run `sudo ./fix-wifi.sh --apply --rebuild-initramfs`
-  to rebuild it safely: it builds a new file, checks the disk driver is inside,
-  and keeps a backup named `initramfs-<version>.img.before-fix-wifi`.
+  `/boot`). If it carries its own copy of the Wi-Fi firmware, the driver reads
+  that old copy. `fix-wifi.sh` checks this and tells you. Run
+  `sudo ./fix-wifi.sh --apply --rebuild-initramfs` to rebuild it. It works with
+  both Ubuntu (`/boot/initrd.img-*`, rebuilt with `update-initramfs`) and dracut
+  (`/boot/initramfs-*.img`), and keeps a backup ending in `.before-fix-wifi`.
 - Sound: `sudo dmesg | grep -iE 'tplg|q6apm|snd'`, then
   `systemctl --user restart wireplumber pipewire` as your normal user.
