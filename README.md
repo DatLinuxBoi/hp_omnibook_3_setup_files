@@ -36,10 +36,17 @@ settings (the same ones Windows uses), and saves the copy in
 original file is never changed.
 
 **Sound.** Sound runs through a helper processor (the audio DSP). It needs a
-"topology" file, a wiring diagram named after this laptop, and a UCM profile,
-a recipe for PipeWire. `fix-audio.sh` copies the Surface Laptop 7 topology under
-this laptop's name (or uses one you give it with `--tplg`), and adds a shortcut
-so the laptop uses the ThinkPad T14s sound recipe.
+"topology" file, a wiring diagram named after this laptop, and a UCM recipe
+for PipeWire. `fix-audio.sh` uses the diagram and recipe that
+[jglathe](https://github.com/jglathe) made for the Lenovo IdeaPad Slim 3
+15Q8X10, which has the same chip and layout. It downloads pinned versions
+of [his topology](https://github.com/jglathe/audioreach-topology/tree/jg/x1-lenovo-ideapad-slim3)
+and [his recipe](https://github.com/jglathe/alsa-ucm-conf/tree/jg/x1-lenovo-ideapad-slim3),
+builds the diagram, saves it under this laptop's name, and installs the recipe
+as `HP-OmniBook3*.conf`. His diagram gives each output its own path. That
+avoids sound stopping when one output isn't ready. The old borrowed setup
+(Surface Laptop 7 diagram + ThinkPad T14s recipe) is still available as `--legacy`.
+Needs: `sudo apt install git m4 alsa-utils`.
 
 ## Files
 
@@ -59,7 +66,7 @@ so the laptop uses the ThinkPad T14s sound recipe.
 | Fix | Adds | Never touches |
 | --- | --- | --- |
 | Wi-Fi | `/lib/firmware/updates/ath11k/WCN6855/hw2.1/board-2.bin` | `/lib/firmware/ath11k/...` (distro's file) |
-| Sound | `/lib/firmware/updates/qcom/x1e80100/X1E80100-HP-OMNIBOOK-3-tplg.bin` and the shortcut `/usr/share/alsa/ucm2/conf.d/x1e80100/<card name>.conf` | Any existing file |
+| Sound | `/lib/firmware/updates/qcom/x1e80100/X1E80100-HP-OMNIBOOK-3-tplg.bin`, `/usr/share/alsa/ucm2/Qualcomm/x1e80100/HP-OmniBook3.conf` and `HP-OmniBook3-HiFi.conf`, and the shortcut `/usr/share/alsa/ucm2/conf.d/x1e80100/<card name>.conf` | Any of Ubuntu's own files |
 
 ## Needs
 
