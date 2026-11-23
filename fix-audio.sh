@@ -90,10 +90,12 @@ info() { printf '    %s\n' "$*"; }
 die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
 # Print a file's contents, unpacking it if compressed (.zst or .xz).
+# The "<" feeds the contents in, so Ubuntu's shortcut (symlink) files work.
+# Given a shortcut by name, zstd refuses it and hands back nothing.
 read_firmware() {
   case $1 in
-    *.zst) zstd -dc "$1" ;;
-    *.xz)  xz -dc "$1" ;;
+    *.zst) zstd -dc < "$1" ;;
+    *.xz)  xz -dc < "$1" ;;
     *)     cat "$1" ;;
   esac
 }
@@ -215,6 +217,10 @@ if [ "$TPLG_TODO" = yes ]; then
   mkdir -p "$OUR_TPLG_DIR"
   # Save it uncompressed, so it loads whatever compression your kernel supports.
   read_firmware "$SOURCE" > "$OUR_TPLG.tmp"
+  if [ ! -s "$OUR_TPLG.tmp" ]; then     # -s = "exists and isn't empty"
+    rm -f "$OUR_TPLG.tmp"
+    die "couldn't read $SOURCE (it came out empty). Is zstd/xz installed?"
+  fi
   chmod 644 "$OUR_TPLG.tmp"
   mv "$OUR_TPLG.tmp" "$OUR_TPLG"
   info "saved $OUR_TPLG"

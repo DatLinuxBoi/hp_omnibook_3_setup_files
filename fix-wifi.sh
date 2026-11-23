@@ -87,10 +87,13 @@ have() { command -v "$1" >/dev/null 2>&1; } # "is this program installed?"
 
 # Print a firmware file's contents, unpacking it first if it is compressed
 # (distros often ship board-2.bin.zst or board-2.bin.xz).
+# The "<" feeds the file's contents in. That matters on Ubuntu, where these
+# files are shortcuts (symlinks): given a shortcut by name, zstd refuses it
+# and hands back nothing.
 read_firmware() {
   case $1 in
-    *.zst) zstd -dc "$1" ;;
-    *.xz)  xz -dc "$1" ;;
+    *.zst) zstd -dc < "$1" ;;
+    *.xz)  xz -dc < "$1" ;;
     *)     cat "$1" ;;
   esac
 }
@@ -246,6 +249,10 @@ for f in "$ORIGINAL_DIR/board-2.bin" "$ORIGINAL_DIR/board-2.bin.zst" "$ORIGINAL_
 done
 [ -n "$ORIGINAL" ] || die "no board-2.bin in $ORIGINAL_DIR. Install your distro's linux-firmware package first."
 info "found $ORIGINAL"
+# Make sure it can actually be read (and unpacked, if compressed).
+SIZE=$(read_firmware "$ORIGINAL" | wc -c)
+[ "$SIZE" -gt 0 ] || die "couldn't read $ORIGINAL (it came out empty). Is zstd/xz installed?"
+info "read it fine ($SIZE bytes)"
 
 # If your distro has already added HP's label, nothing needs doing.
 if read_firmware "$ORIGINAL" | grep -qaF "$NEW_NAME"; then
@@ -301,7 +308,10 @@ info "using $BDENCODER"
 say "Step 3: unpack a copy of board-2.bin"
 read_firmware "$ORIGINAL" > "$WORK/original.bin"
 mkdir "$WORK/unpacked"
-( cd "$WORK/unpacked" && python3 "$BDENCODER" -e "$WORK/original.bin" >/dev/null )
+# The tool prints one line per laptop (hundreds), so normal output is hidden.
+# Error messages still show. If it fails, the script says so instead of quitting silently.
+( cd "$WORK/unpacked" && python3 "$BDENCODER" -e "$WORK/original.bin" >/dev/null ) \
+  || die "Qualcomm's tool couldn't unpack board-2.bin (see the message above)"
 [ -f "$WORK/unpacked/board-2.json" ] || die "unpacking failed (no board-2.json)"
 
 # ---- Step 4: add HP's label ---------------------------------------------------------
@@ -340,7 +350,8 @@ info "added the label to $CHANGED entry"
 # new file again and make sure HP's label really made it in.
 
 say "Step 5: repack and check"
-( cd "$WORK/unpacked" && python3 "$BDENCODER" -c board-2.json -o "$WORK/new.bin" >/dev/null )
+( cd "$WORK/unpacked" && python3 "$BDENCODER" -c board-2.json -o "$WORK/new.bin" >/dev/null ) \
+  || die "Qualcomm's tool couldn't repack board-2.bin (see the message above)"
 [ -s "$WORK/new.bin" ] || die "repacking produced an empty file"
 mkdir "$WORK/check"
 ( cd "$WORK/check" && python3 "$BDENCODER" -e "$WORK/new.bin" >/dev/null )
