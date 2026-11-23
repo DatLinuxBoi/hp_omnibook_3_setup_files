@@ -37,6 +37,9 @@
 #   ./fix-wifi.sh              Preview only. Shows what it WOULD do. Changes nothing.
 #   sudo ./fix-wifi.sh --apply Actually does it.
 #   sudo ./fix-wifi.sh --undo  Removes the copy this script added.
+#   Add --rebuild-initramfs to --apply or --undo if the script tells you your
+#   initramfs (the starter system in /boot) carries Wi-Fi firmware. Without
+#   a rebuild, the driver keeps reading the OLD copy packed inside it.
 #   Then REBOOT. (Don't unload and reload the Wi-Fi driver by hand with
 #   modprobe. On this laptop that has crashed the Wi-Fi chip before.)
 #
@@ -96,12 +99,16 @@ read_firmware() {
 
 MODE=preview
 BDENCODER=""
+REBUILD=no
 while [ $# -gt 0 ]; do
   case $1 in
     --apply) MODE=apply ;;
     --undo)  MODE=undo ;;
     --bdencoder) [ $# -ge 2 ] || die "--bdencoder needs a path"; BDENCODER=$2; shift ;;
-    -h|--help) sed -n '2,/^# ====*$/p' "$0" | sed '1d'; exit 0 ;;
+    --rebuild-initramfs) REBUILD=yes ;;
+    # Print the comment block at the top of this file (every line starting
+    # with "#", stopping at the first line that doesn't).
+    -h|--help) awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0"; exit 0 ;;
     *) die "unknown option: $1  (try --help)" ;;
   esac
   shift
@@ -112,6 +119,72 @@ if [ "$MODE" != preview ] && [ "$(id -u)" != 0 ]; then
   die "run with sudo for --apply or --undo"
 fi
 
+# ---- The initramfs ------------------------------------------------------------
+# The initramfs is a small starter system in /boot that loads drivers before
+# your main disk is ready. If it carries its own copy of board-2.bin, the
+# Wi-Fi driver reads THAT copy and never sees the fixed one on disk. So after
+# changing the firmware, the initramfs has to be rebuilt.
+
+KVER=$(uname -r)                                   # the kernel you're running now
+IMG=${INITRAMFS:-/boot/initramfs-$KVER.img}        # its initramfs (dracut's usual name)
+WIFI_FW_PATH="ath11k/WCN6855/hw2.1/board-2.bin"
+
+# Answers "does the initramfs carry Wi-Fi firmware?" with yes / no / unknown.
+# lsinitrd (part of dracut) lists the files inside an initramfs. Read only.
+initramfs_has_wifi_fw() {
+  if ! have lsinitrd || [ ! -f "$IMG" ]; then echo unknown; return; fi
+  if lsinitrd "$IMG" 2>/dev/null | grep -q "$WIFI_FW_PATH"; then echo yes; else echo no; fi
+}
+
+# Rebuild the initramfs the same way the old omnibook3-setup.sh did, with
+# extra safety: build to a NEW file, check it, keep a backup of the old one,
+# and only then swap them.
+#   $1 = "present" after --apply (fixed file should be inside)
+#        "absent"  after --undo  (fixed file should be gone)
+rebuild_initramfs() {
+  have dracut || die "dracut not found. Rebuild your initramfs with your distro's tool instead."
+  say "Rebuilding the initramfs: $IMG"
+  # --no-hostonly = include ALL drivers. Without it, your old notes say the
+  # boot hung because the disk driver was left out. Don't remove it.
+  dracut -f --no-hostonly --kver "$KVER" "$IMG.new"
+  # Safety check 1: the disk driver (nvme) must be inside, or the laptop
+  # can't find its disk at boot. If missing, stop and keep the old file.
+  if ! lsinitrd "$IMG.new" | grep -q nvme; then
+    rm -f "$IMG.new"
+    die "the new initramfs has no disk (nvme) driver, so it was NOT installed. Your old one is unchanged."
+  fi
+  # Check 2: is our fixed Wi-Fi file inside (or gone, after --undo)?
+  if lsinitrd "$IMG.new" | grep -q "updates/$WIFI_FW_PATH"; then inside=present; else inside=absent; fi
+  [ "$inside" = "$1" ] || info "WARNING: expected the fixed Wi-Fi file to be $1 in the new initramfs, but it is $inside."
+  cp -p "$IMG" "$IMG.before-fix-wifi"          # backup of the old one
+  mv "$IMG.new" "$IMG"
+  info "done. The old initramfs is saved as $IMG.before-fix-wifi"
+  info "(if the laptop won't boot, pick another kernel in the boot menu and copy that file back)"
+}
+
+# Decide what to do about the initramfs, after --apply or --undo.
+handle_initramfs() {
+  state=$(initramfs_has_wifi_fw)
+  case $state in
+    yes)
+      if [ "$REBUILD" = yes ]; then
+        rebuild_initramfs "$1"
+      else
+        say "IMPORTANT: your initramfs carries its own copy of the Wi-Fi firmware."
+        info "Until it's rebuilt, the change won't take effect. Either run this script"
+        info "again with --rebuild-initramfs, or run this yourself:"
+        info "  sudo dracut -f --no-hostonly --kver $KVER $IMG"
+      fi ;;
+    no)
+      info "your initramfs has no Wi-Fi firmware, so it doesn't need rebuilding" ;;
+    unknown)
+      info "couldn't check your initramfs ($IMG or lsinitrd missing)."
+      info "If Wi-Fi still fails after a reboot, rebuild it with your distro's tool:"
+      info "  dracut: sudo dracut -f --no-hostonly    Arch: sudo mkinitcpio -P"
+      info "  Debian/Ubuntu: sudo update-initramfs -u" ;;
+  esac
+}
+
 # ---- Undo -----------------------------------------------------------------------
 
 if [ "$MODE" = undo ]; then
@@ -119,7 +192,9 @@ if [ "$MODE" = undo ]; then
     rm -f "$OUR_FILE"
     # Remove the folders we made, only if they are now empty.
     rmdir -p "$OUR_DIR" 2>/dev/null || true
-    say "Removed $OUR_FILE. Reboot to go back to the original."
+    say "Removed $OUR_FILE."
+    handle_initramfs absent
+    say "Reboot to go back to the original."
   else
     say "Nothing to undo: $OUR_FILE does not exist."
   fi
@@ -154,6 +229,12 @@ if [ "$MODE" = preview ]; then
   info "4. repack it and check the label is really there"
   info "5. save it as $OUR_FILE"
   info "Your original file is never changed."
+  case $(initramfs_has_wifi_fw) in
+    yes) info "6. NOTE: your initramfs ($IMG) carries Wi-Fi firmware, so it must be"
+         info "   rebuilt too. Add --rebuild-initramfs to have this script do it." ;;
+    no)  info "6. your initramfs has no Wi-Fi firmware, so no rebuild is needed" ;;
+    *)   info "6. couldn't check your initramfs; the script will tell you what to do" ;;
+  esac
   exit 0
 fi
 
@@ -236,6 +317,11 @@ say "Step 6: save the new copy"
 mkdir -p "$OUR_DIR"
 install -m 644 "$WORK/new.bin" "$OUR_FILE"   # copy with permissions rw-r--r--
 info "saved $OUR_FILE"
+
+# ---- Step 7: the initramfs ------------------------------------------------------------------
+
+say "Step 7: check the initramfs (the starter system in /boot)"
+handle_initramfs present
 
 say "Done. Reboot, then check Wi-Fi with:  nmcli device wifi list"
 info "If it still fails:  sudo dmesg | grep -i ath11k"

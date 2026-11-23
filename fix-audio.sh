@@ -130,7 +130,9 @@ while [ $# -gt 0 ]; do
     --apply) MODE=apply ;;
     --undo)  MODE=undo ;;
     --tplg)  [ $# -ge 2 ] || die "--tplg needs a file"; TPLG=$2; shift ;;
-    -h|--help) sed -n '2,/^# ====*$/p' "$0" | sed '1d'; exit 0 ;;
+    # Print the comment block at the top of this file (every line starting
+    # with "#", stopping at the first line that doesn't).
+    -h|--help) awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0"; exit 0 ;;
     *) die "unknown option: $1  (try --help)" ;;
   esac
   shift
